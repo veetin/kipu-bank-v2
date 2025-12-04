@@ -1,0 +1,12 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+# Configuração opcional para verificação de contratos
+# Descomente e adicione suas API keys para verificação automática
+# [etherscan]
+# etherscan = { key = "${ETHERSCAN_API_KEY}" }
+# basescan = { key = "${BASESCAN_API_KEY}" }
