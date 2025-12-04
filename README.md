@@ -2,8 +2,9 @@
 
 A secure, multi-asset smart contract banking system built on Ethereum that allows users to deposit and withdraw both native ETH and ERC20 tokens with configurable limits and comprehensive security measures.
 
-Contract Address: 0x685191C96874598768bD2E3d8C5E2b8286af668D
-Sepolia scan: https://sepolia.etherscan.io/address/0x685191C96874598768bD2E3d8C5E2b8286af668D
+**Contract Address:** 0x685191C96874598768bD2E3d8C5E2b8286af668D
+
+**Sepolia Scan:** https://sepolia.etherscan.io/address/0x685191C96874598768bD2E3d8C5E2b8286af668D
 
 ## Overview
 
