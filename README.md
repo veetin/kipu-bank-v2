@@ -1,225 +1,521 @@
 # KipuBank v2
 
-A secure, multi-asset smart contract banking system built on Ethereum that allows users to deposit and withdraw both native ETH and ERC20 tokens with configurable limits and comprehensive security measures.
-
-Contract Address: 0x685191C96874598768bD2E3d8C5E2b8286af668D
-Sepolia scan: https://sepolia.etherscan.io/address/0x685191C96874598768bD2E3d8C5E2b8286af668D
+A production-ready, multi-asset smart contract banking system built on Ethereum with Chainlink price feeds, role-based access control, and unified accounting in USDC decimals.
 
 ## Overview
 
-KipuBank v2 is a smart contract that acts as a custodian for digital assets. It supports:
-- **Native ETH deposits and withdrawals**
-- **ERC20 token deposits and withdrawals**
-- **Configurable deposit and transaction limits**
-- **Owner-only withdrawal mechanism**
-- **Reentrancy protection**
-- **Comprehensive access controls**
+KipuBank v2 is an advanced smart contract that acts as a custodian for digital assets. This evolved version includes:
 
-## Features
+- **Chainlink Price Feeds Integration**: Real-time ETH/USD conversion using Chainlink Data Feeds
+- **Unified Accounting System**: All balances tracked in USDC decimals (6 decimals) for consistent accounting
+- **Role-Based Access Control**: Fine-grained permissions using OpenZeppelin's AccessControl
+- **Multi-Token Support**: Native ETH (represented as address(0)) and ERC20 tokens
+- **Decimal Conversion**: Automatic conversion between different token decimals and USDC standard
+- **Production-Ready Security**: Comprehensive error handling, reentrancy protection, and input validation
 
-### Core Functionality
+## Key Improvements from Original KipuBank
 
-- ✅ **Dual Asset Support**: Store both ETH and ERC20 tokens
-- ✅ **Deposit Limits**: Configurable maximum total deposits
-- ✅ **Transaction Limits**: Maximum amount per transaction
-- ✅ **Owner Controls**: Only contract owner can withdraw funds
-- ✅ **Balance Tracking**: Separate tracking for ETH and each ERC20 token
-- ✅ **Event Logging**: Comprehensive event emission for all operations
+### 1. Chainlink Oracle Integration
+- **ETH/USD Price Feed**: Uses Chainlink AggregatorV3Interface for real-time price data
+- **Bank Cap Control**: Deposit limits enforced in USD terms using price feeds
+- **Price Staleness Protection**: Maximum 24-hour staleness check for price data
+- **Multi-Token Price Support**: Configurable price feeds per token for accurate valuation
 
-### Security Features
+### 2. Unified Accounting System
+- **USDC Decimal Standard**: All internal accounting uses 6 decimals (USDC standard)
+- **Address(0) for ETH**: Native ETH is represented as `address(0)` in token mappings
+- **Dual Balance Tracking**: Each balance stores both raw amount and USDC equivalent
+- **Total Deposits Tracking**: Per-token total deposits in USDC equivalent
 
-- 🔒 **ReentrancyGuard**: Protection against reentrancy attacks
-- 🔒 **Ownable**: Access control using OpenZeppelin's Ownable pattern
-- 🔒 **SafeERC20**: Safe token transfers handling non-standard ERC20 tokens
-- 🔒 **Input Validation**: Zero address and zero amount checks
-- 🔒 **Checks-Effects-Interactions**: Secure state update pattern
+### 3. Advanced Access Control
+- **Role-Based Permissions**: 
+  - `DEFAULT_ADMIN_ROLE`: Full administrative control
+  - `ADMIN_ROLE`: Can manage token info and settings
+  - `OPERATOR_ROLE`: Can withdraw funds
+- **Flexible Role Management**: Roles can be granted/revoked dynamically
+- **Multi-Admin Support**: Multiple administrators can be assigned
+
+### 4. Type Declarations
+- **TokenBalance Struct**: Stores raw amount and USDC equivalent
+- **TokenInfo Struct**: Stores token decimals and price feed address
+- **Type Safety**: Custom types improve code readability and safety
+
+### 5. Gas Optimizations
+- **Immutable Variables**: Price feed and limits stored as immutable for gas savings
+- **Constant Values**: USDC decimals and price staleness threshold as constants
+- **Efficient Storage**: Nested mappings optimized for gas usage
+
+### 6. Enhanced Error Handling
+- **Custom Errors**: Gas-efficient custom errors instead of string messages
+- **Comprehensive Validation**: Price feed validation, staleness checks, and amount validation
+- **Clear Error Messages**: Specific errors for each failure scenario
 
 ## Contract Architecture
 
 ### Storage Structure
 
 ```solidity
-// ETH balances per user
-mapping(address => uint256) public balances;
+// Type Declarations
+struct TokenBalance {
+    uint256 rawAmount;        // Amount in token's native decimals
+    uint256 usdcEquivalent;   // Amount in USDC decimals (6)
+}
 
-// ERC20 token balances per token and per user
-mapping(address => mapping(address => uint256)) public tokenBalances;
+struct TokenInfo {
+    uint8 decimals;           // Token decimals
+    address priceFeed;        // Chainlink price feed (address(0) if none)
+}
 
-// Limits
-uint256 internal depositLimit;        // Maximum total deposits
-uint256 internal transactionsLimit;  // Maximum per transaction
+// Constants
+uint8 public constant USDC_DECIMALS = 6;
+uint256 public constant MAX_PRICE_STALENESS = 86400; // 24 hours
+address public constant NATIVE_ETH = address(0);
 
-// Counters
-uint256 internal counterDeposit;
-uint256 internal counterWithdraw;
+// Immutable Variables
+AggregatorV3Interface public immutable ETH_USD_PRICE_FEED;
+uint256 public immutable DEPOSIT_LIMIT_USDC;
+uint256 public immutable TRANSACTIONS_LIMIT_USDC;
+
+// Storage Mappings
+mapping(address => mapping(address => TokenBalance)) public balances;
+mapping(address => TokenInfo) public tokenInfo;
+mapping(address => uint256) public totalDepositsUsdc;
 ```
 
 ### Key Functions
 
-#### ETH Operations
+#### Deposit Functions
 
-**`deposit()`** - Deposits native ETH
-- `payable` function that accepts ETH
-- Validates amount and sender
-- Checks deposit and transaction limits
-- Updates user balance
+**`deposit()`** - Deposit native ETH
+- Converts ETH to USDC equivalent using Chainlink price feed
+- Validates transaction and deposit limits in USD terms
+- Updates both raw ETH balance and USDC equivalent
+- Emits `Deposit` event with both amounts
+
+**`depositToken(address token, uint256 amount)`** - Deposit ERC20 tokens
+- Requires token info to be set via `setTokenInfo()`
+- Converts token amount to USDC equivalent
+- Validates limits in USD terms
+- Uses `safeTransferFrom` for secure token transfer
 - Emits `Deposit` event
 
-**`withdraw(uint256 amount)`** - Withdraws ETH (owner only)
-- Requires `onlyOwner` modifier
-- Validates balance sufficiency
-- Transfers ETH to owner
+#### Withdrawal Functions
+
+**`withdraw(uint256 amount)`** - Withdraw ETH (OPERATOR_ROLE only)
+- Validates sufficient balance
+- Updates accounting in USDC equivalent
+- Transfers ETH using low-level call
 - Emits `Withdraw` event
 
-#### ERC20 Token Operations
-
-**`depositToken(address token, uint256 amount)`** - Deposits ERC20 tokens
-- Requires token approval before calling
-- Validates token address and amount
-- Checks deposit and transaction limits
-- Uses `safeTransferFrom` for secure transfer
-- Updates token balance mapping
-- Emits `DepositToken` event
-
-**`withdrawToken(address token, uint256 amount)`** - Withdraws ERC20 tokens (owner only)
-- Requires `onlyOwner` modifier
+**`withdrawToken(address token, uint256 amount)`** - Withdraw ERC20 tokens (OPERATOR_ROLE only)
 - Validates token balance
-- Uses `safeTransfer` for secure transfer
-- Emits `WithdrawToken` event
+- Updates accounting in USDC equivalent
+- Uses `safeTransfer` for secure token transfer
+- Emits `Withdraw` event
+
+#### Administrative Functions
+
+**`setTokenInfo(address token, uint8 decimals, address priceFeed)`** - Set token metadata (ADMIN_ROLE only)
+- Configures token decimals and optional price feed
+- Validates price feed if provided
+- Required before depositing ERC20 tokens (except ETH)
 
 #### View Functions
 
-- `getBalance(address)` - Returns ETH balance for an address
-- `getTokenBalance(address token, address user)` - Returns ERC20 balance
-- `getContractBalance()` - Returns total ETH in contract
-- `getContractTokenBalance(address token)` - Returns total tokens in contract
-- `getDepositLimit()` - Returns maximum deposit limit
-- `getTransactionsLimit()` - Returns maximum transaction limit
-- `getCounterDeposit()` - Returns total deposit count
-- `getCounterWithdraw()` - Returns total withdrawal count
+- `getBalance(address token, address user)` - Returns raw amount and USDC equivalent
+- `getTotalDepositsUsdc(address token)` - Returns total deposits in USDC decimals
+- `getContractBalance()` - Returns contract's ETH balance
+- `getContractTokenBalance(address token)` - Returns contract's token balance
+- `getEthUsdPrice()` - Returns current ETH/USD price from Chainlink
 
 ## How It Works
 
-### ETH Deposit Flow
+### Deposit Flow (ETH)
 
 ```
 1. User calls deposit() with ETH (msg.value)
-2. Contract validates:
-   - Amount > 0
-   - Sender != address(0)
-   - Contract balance + amount <= depositLimit
-   - Amount <= transactionsLimit
-3. Updates balances[msg.sender] += msg.value
-4. Emits Deposit event
+2. Contract:
+   - Gets ETH/USD price from Chainlink
+   - Converts ETH amount to USDC equivalent (6 decimals)
+   - Validates: usdcEquivalent <= TRANSACTIONS_LIMIT_USDC
+   - Validates: totalDepositsUsdc[ETH] + usdcEquivalent <= DEPOSIT_LIMIT_USDC
+3. Updates balances[address(0)][user] with both raw and USDC amounts
+4. Updates totalDepositsUsdc[address(0)]
+5. Emits Deposit event
 ```
 
-### ERC20 Deposit Flow
+### Deposit Flow (ERC20)
 
 ```
-1. User approves contract to spend tokens
-2. User calls depositToken(tokenAddress, amount)
-3. Contract validates:
-   - Amount > 0
-   - Token address != address(0)
-   - Contract token balance + amount <= depositLimit
-   - Amount <= transactionsLimit
-4. Transfers tokens from user to contract (safeTransferFrom)
-5. Updates tokenBalances[token][user] += amount
-6. Emits DepositToken event
+1. Admin sets token info: setTokenInfo(token, decimals, priceFeed)
+2. User approves contract to spend tokens
+3. User calls depositToken(token, amount)
+4. Contract:
+   - Transfers tokens from user (safeTransferFrom)
+   - Converts amount to USDC equivalent using price feed
+   - Validates limits in USD terms
+5. Updates balances[token][user] and totalDepositsUsdc[token]
+6. Emits Deposit event
 ```
 
-### Withdrawal Flow (Owner Only)
+### Decimal Conversion
 
+The contract normalizes all values to USDC decimals (6) for unified accounting:
+
+```solidity
+// Example: Convert 1 ETH (18 decimals) to USDC equivalent
+// 1. Get ETH price from Chainlink (e.g., $3000 with 8 decimals)
+// 2. Calculate: (1e18 * 3000e8 * 1e6) / (1e18 * 1e8) = 3000e6
+// Result: 3000 USDC equivalent (6 decimals)
 ```
-1. Owner calls withdraw(amount) or withdrawToken(token, amount)
-2. Contract validates:
-   - Owner has sufficient balance
-   - Amount > 0
-3. Updates balance (checks-effects-interactions pattern)
-4. Transfers funds to owner
-5. Emits Withdraw/WithdrawToken event
-```
+
+### Price Feed Integration
+
+- **ETH/USD**: Uses Chainlink AggregatorV3Interface
+- **Other Tokens**: Configurable per token via `setTokenInfo()`
+- **Staleness Check**: Prices older than 24 hours are rejected
+- **Fallback**: If no price feed, assumes 1:1 conversion (for stablecoins)
 
 ## Usage Examples
 
-### Deploying the Contract
+### Deployment
 
 ```bash
-# Using Foundry script
+# Set environment variable for price feed (optional)
+export ETH_USD_PRICE_FEED=0x694AA1769357215DE4FAC081bf1f309aDC325306
+
+# Deploy to Sepolia
 forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
-    --rpc-url http://localhost:8545 \
+    --rpc-url $SEPOLIA_RPC_URL \
     --private-key $PRIVATE_KEY \
     --broadcast
+```
+
+### Setting Up Token Info
+
+```solidity
+// Set USDC token info (6 decimals, no price feed needed for 1:1)
+kipuBank.setTokenInfo(
+    0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48, // USDC address
+    6,                                           // decimals
+    address(0)                                   // no price feed
+);
+
+// Set DAI token info (18 decimals, with price feed)
+kipuBank.setTokenInfo(
+    0x6B175474E89094C44Da98b954EedeAC495271d0F, // DAI address
+    18,                                          // decimals
+    0x773616E4d11A78F511299002da57A0a94577F1f4  // DAI/USD price feed
+);
 ```
 
 ### Depositing ETH
 
 ```solidity
-// Send ETH directly with the transaction
+// Deposit 1 ETH
 kipuBank.deposit{value: 1 ether}();
+
+// Check balance
+(uint256 rawAmount, uint256 usdcEquivalent) = kipuBank.getBalance(
+    address(0),  // ETH is address(0)
+    msg.sender
+);
+// rawAmount: 1000000000000000000 (1e18 wei)
+// usdcEquivalent: ~3000000000 (3000e6, assuming $3000/ETH)
 ```
 
 ### Depositing ERC20 Tokens
 
 ```solidity
-// Step 1: Approve the contract
-IERC20(tokenAddress).approve(address(kipuBank), amount);
+// Step 1: Approve
+IERC20(usdcAddress).approve(address(kipuBank), 1000 * 10**6);
 
-// Step 2: Deposit tokens
-kipuBank.depositToken(tokenAddress, amount);
+// Step 2: Deposit
+kipuBank.depositToken(usdcAddress, 1000 * 10**6);
+
+// Check balance
+(uint256 rawAmount, uint256 usdcEquivalent) = kipuBank.getBalance(
+    usdcAddress,
+    msg.sender
+);
+// rawAmount: 1000000000 (1000e6)
+// usdcEquivalent: 1000000000 (1000e6, 1:1 for USDC)
 ```
 
-### Withdrawing (Owner Only)
+### Withdrawing (Operator Only)
 
 ```solidity
 // Withdraw ETH
-kipuBank.withdraw(amount);
+kipuBank.withdraw(0.5 ether);
 
 // Withdraw ERC20 tokens
-kipuBank.withdrawToken(tokenAddress, amount);
+kipuBank.withdrawToken(usdcAddress, 500 * 10**6);
 ```
 
-### Querying Balances
+### Querying Prices
 
 ```solidity
-// ETH balance
-uint256 ethBalance = kipuBank.getBalance(userAddress);
-
-// ERC20 token balance
-uint256 tokenBalance = kipuBank.getTokenBalance(tokenAddress, userAddress);
-
-// Contract total ETH
-uint256 contractETH = kipuBank.getContractBalance();
-
-// Contract total tokens
-uint256 contractTokens = kipuBank.getContractTokenBalance(tokenAddress);
+// Get current ETH/USD price
+(int256 price, uint8 decimals) = kipuBank.getEthUsdPrice();
+// price: 300000000000 (3000e8, Chainlink uses 8 decimals)
+// decimals: 8
 ```
 
-## Security Considerations
+## Interações com o Contrato
+
+Esta seção fornece exemplos práticos de como interagir com o contrato usando Cast (Foundry CLI).
+
+O `cast` é uma ferramenta de linha de comando do Foundry para interagir com contratos.
+
+#### Variáveis de Ambiente
+
+```bash
+# Endereço do contrato (ajuste após deploy)
+export CONTRACT_ADDRESS=0x...
+
+# RPC URL (ajuste conforme necessário)
+export RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
+# ou para local: export RPC_URL=http://localhost:8545
+
+# Chave privada (use com cuidado!)
+export PRIVATE_KEY=your_private_key
+```
+
+#### Consultas (View Functions)
+
+```bash
+# Obter saldo de um usuário para ETH
+cast call $CONTRACT_ADDRESS \
+    "getBalance(address,address)" \
+    "0x0000000000000000000000000000000000000000" \
+    "0xYourUserAddress" \
+    --rpc-url $RPC_URL
+
+# Obter saldo de um usuário para um token ERC20
+cast call $CONTRACT_ADDRESS \
+    "getBalance(address,address)" \
+    "0xTokenAddress" \
+    "0xYourUserAddress" \
+    --rpc-url $RPC_URL
+
+# Obter total de depósitos em USDC para um token
+cast call $CONTRACT_ADDRESS \
+    "getTotalDepositsUsdc(address)" \
+    "0x0000000000000000000000000000000000000000" \
+    --rpc-url $RPC_URL
+
+# Obter saldo de ETH do contrato
+cast call $CONTRACT_ADDRESS \
+    "getContractBalance()" \
+    --rpc-url $RPC_URL
+
+# Obter saldo de token do contrato
+cast call $CONTRACT_ADDRESS \
+    "getContractTokenBalance(address)" \
+    "0xTokenAddress" \
+    --rpc-url $RPC_URL
+
+# Obter preço ETH/USD atual
+cast call $CONTRACT_ADDRESS \
+    "getEthUsdPrice()" \
+    --rpc-url $RPC_URL
+
+# Obter informações de um token
+cast call $CONTRACT_ADDRESS \
+    "tokenInfo(address)" \
+    "0xTokenAddress" \
+    --rpc-url $RPC_URL
+
+# Obter limites do contrato
+cast call $CONTRACT_ADDRESS "DEPOSIT_LIMIT_USDC()" --rpc-url $RPC_URL
+cast call $CONTRACT_ADDRESS "TRANSACTIONS_LIMIT_USDC()" --rpc-url $RPC_URL
+```
+
+#### Transações (State-Changing Functions)
+
+```bash
+# Depositar ETH (0.1 ETH = 100000000000000000 wei)
+cast send $CONTRACT_ADDRESS \
+    "deposit()" \
+    --value 100000000000000000 \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+
+# Depositar token ERC20 (1000 tokens com 6 decimais = 1000000000)
+cast send $CONTRACT_ADDRESS \
+    "depositToken(address,uint256)" \
+    "0xTokenAddress" \
+    "1000000000" \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+
+# Configurar informações de token (apenas ADMIN_ROLE)
+cast send $CONTRACT_ADDRESS \
+    "setTokenInfo(address,uint8,address)" \
+    "0xTokenAddress" \
+    "18" \
+    "0xPriceFeedAddress" \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+
+# Sacar ETH (apenas OPERATOR_ROLE)
+cast send $CONTRACT_ADDRESS \
+    "withdraw(uint256)" \
+    "500000000000000000" \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+
+# Sacar token ERC20 (apenas OPERATOR_ROLE)
+cast send $CONTRACT_ADDRESS \
+    "withdrawToken(address,uint256)" \
+    "0xTokenAddress" \
+    "500000000" \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+```
+
+#### Gerenciamento de Roles
+
+```bash
+# Verificar se um endereço tem ADMIN_ROLE
+cast call $CONTRACT_ADDRESS \
+    "hasRole(bytes32,address)" \
+    $(cast keccak256 "ADMIN_ROLE") \
+    "0xAddressToCheck" \
+    --rpc-url $RPC_URL
+
+# Verificar se um endereço tem OPERATOR_ROLE
+cast call $CONTRACT_ADDRESS \
+    "hasRole(bytes32,address)" \
+    $(cast keccak256 "OPERATOR_ROLE") \
+    "0xAddressToCheck" \
+    --rpc-url $RPC_URL
+
+# Conceder ADMIN_ROLE (apenas DEFAULT_ADMIN_ROLE)
+cast send $CONTRACT_ADDRESS \
+    "grantRole(bytes32,address)" \
+    $(cast keccak256 "ADMIN_ROLE") \
+    "0xNewAdminAddress" \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+
+# Conceder OPERATOR_ROLE (apenas DEFAULT_ADMIN_ROLE ou ADMIN_ROLE)
+cast send $CONTRACT_ADDRESS \
+    "grantRole(bytes32,address)" \
+    $(cast keccak256 "OPERATOR_ROLE") \
+    "0xNewOperatorAddress" \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+
+# Revogar role
+cast send $CONTRACT_ADDRESS \
+    "revokeRole(bytes32,address)" \
+    $(cast keccak256 "OPERATOR_ROLE") \
+    "0xOperatorAddress" \
+    --private-key $PRIVATE_KEY \
+    --rpc-url $RPC_URL
+```
+
+## Security Features
 
 ### Implemented Protections
 
-1. **ReentrancyGuard**: All state-changing functions use `nonReentrant` modifier
-2. **Ownable**: Only owner can withdraw funds
-3. **SafeERC20**: Handles tokens that don't return boolean values
-4. **Input Validation**: All functions validate addresses and amounts
+1. **ReentrancyGuard**: All state-changing functions protected
+2. **AccessControl**: Role-based permissions prevent unauthorized access
+3. **SafeERC20**: Handles non-standard ERC20 tokens safely
+4. **Input Validation**: Comprehensive checks for addresses, amounts, and prices
 5. **Checks-Effects-Interactions**: State updates before external calls
+6. **Price Staleness Check**: Prevents using outdated price data
+7. **Custom Errors**: Gas-efficient error handling
 
-### Important Notes
+### Important Security Notes
 
-⚠️ **Owner Responsibility**: The contract owner has full control over withdrawals. Ensure the owner address is secure.
+⚠️ **Role Management**: Only grant OPERATOR_ROLE to trusted addresses. Operators can withdraw all funds.
 
-⚠️ **Token Approvals**: Users must approve the contract before depositing ERC20 tokens.
+⚠️ **Price Feed Security**: Ensure price feeds are from official Chainlink contracts. Verify addresses on [Chainlink Docs](https://docs.chain.link/data-feeds/price-feeds/addresses).
 
-⚠️ **Limits**: Both deposit and transaction limits are set at deployment and cannot be changed.
+⚠️ **Token Info Setup**: Always set token info before allowing deposits. Incorrect decimals will cause accounting errors.
+
+⚠️ **Price Feed Staleness**: If price feeds become stale (>24h), deposits will fail. Monitor price feed updates.
+
+## Design Decisions and Trade-offs
+
+### 1. USDC Decimal Standard
+**Decision**: Use 6 decimals (USDC standard) for all internal accounting.
+
+**Rationale**: 
+- Provides consistent accounting across all tokens
+- USDC is a widely-used stablecoin standard
+- 6 decimals provide sufficient precision for most use cases
+
+**Trade-off**: 
+- Requires conversion calculations (gas cost)
+- May lose precision for very small amounts
+
+### 2. Address(0) for ETH
+**Decision**: Use `address(0)` to represent native ETH in token mappings.
+
+**Rationale**:
+- Standard practice in DeFi protocols
+- Simplifies code by treating ETH like other tokens
+- Enables unified accounting system
+
+**Trade-off**:
+- Requires special handling in some functions
+- May be confusing for developers unfamiliar with the pattern
+
+### 3. Immutable Limits
+**Decision**: Deposit and transaction limits are immutable.
+
+**Rationale**:
+- Prevents accidental or malicious changes
+- Reduces gas costs (immutable variables)
+- Ensures predictable behavior
+
+**Trade-off**:
+- Cannot adjust limits after deployment
+- Requires redeployment for limit changes
+
+### 4. Optional Price Feeds
+**Decision**: Price feeds are optional per token.
+
+**Rationale**:
+- Supports stablecoins that don't need price feeds (1:1 conversion)
+- Reduces gas costs for tokens without price feeds
+- Provides flexibility for different token types
+
+**Trade-off**:
+- Requires manual configuration
+- 1:1 assumption may not be accurate for all tokens
+
+### 5. Role-Based Access Control
+**Decision**: Use AccessControl instead of simple Ownable.
+
+**Rationale**:
+- More flexible permission system
+- Supports multiple administrators
+- Industry standard for production contracts
+
+**Trade-off**:
+- More complex than simple owner pattern
+- Requires understanding of role management
 
 ## Development
 
 ### Prerequisites
 
 - [Foundry](https://getfoundry.sh/) installed
-- Solidity ^0.8.0
+- Solidity ^0.8.20
 - OpenZeppelin Contracts v5.x
+- Chainlink Contracts (installed via `forge install`)
+
+### Installation
+
+```bash
+# Install dependencies
+forge install OpenZeppelin/openzeppelin-contracts
+forge install smartcontractkit/chainlink-brownie-contracts
+```
 
 ### Build
 
@@ -243,583 +539,223 @@ forge fmt
 
 ### Local Deployment
 
-This guide explains how to deploy contracts locally using Foundry Forge.
-
-#### Prerequisites
-
-1. **Foundry installed**: Make sure you have Foundry installed
-   ```bash
-   curl -L https://foundry.paradigm.xyz | bash
-   foundryup
-   ```
-
-2. **Verify installation**:
-   ```bash
-   forge --version
-   ```
-
-#### Step-by-Step Local Deployment
-
-### 1. Compile Contracts
-
-Before deploying, you need to compile the contracts:
-
 ```bash
-forge build
-```
-
-This will:
-- Compile all contracts in `src/`
-- Verify dependencies in `lib/`
-- Generate artifacts in `out/`
-
-### 2. Start a Local Network (Anvil)
-
-Anvil is Foundry's tool for creating a local blockchain:
-
-```bash
-anvil
-```
-
-This will:
-- Start a local blockchain on port 8545 (default)
-- Create 10 test accounts with funds
-- Display private keys and addresses
-
-**Example output:**
-```
-Available Accounts
-==================
-(0) 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 (10000.0 ETH)
-Private Key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-
-...
-```
-
-### 3. Configure Environment Variables (Optional)
-
-You can configure environment variables for convenience:
-
-```bash
-export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-export RPC_URL=http://localhost:8545
-```
-
-### 4. Deploy the Contract
-
-#### Option A: Deploy with Script (Recommended)
-
-Use the created deploy script:
-
-```bash
-forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
-    --rpc-url http://localhost:8545 \
-    --private-key $PRIVATE_KEY \
-    --broadcast
-```
-
-Or without environment variables:
-
-```bash
-forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
-    --rpc-url http://localhost:8545 \
-    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-    --broadcast
-```
-
-**Important parameters:**
-- `--rpc-url`: Local network URL (Anvil)
-- `--private-key`: Private key of the account that will deploy
-- `--broadcast`: Actually performs the deploy (without this, it only simulates)
-
-#### Option B: Direct Deploy (Without Script)
-
-```bash
-forge create src/KipuBankv2.sol:KipuBankv2 \
-    --rpc-url http://localhost:8545 \
-    --private-key $PRIVATE_KEY \
-    --constructor-args 100000000000000000000 10000000000000000000
-```
-
-**Note:** Constructor values are in wei:
-- `100000000000000000000` = 100 ether (deposit_limit)
-- `10000000000000000000` = 10 ether (transactions_limit)
-
-### 5. Verify the Deployment
-
-After deployment, you will see:
-- The deployed contract address
-- The transaction hash
-- The gas cost
-
-**Example output:**
-```
-KipuBankv2 deployed at: 0x5FbDB2315678afecb367f032d93F642f64180aa3
-Owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-Deposit Limit: 100000000000000000000
-Transactions Limit: 10000000000000000000
-```
-
-### 6. Interact with the Contract (Optional)
-
-You can use `cast` (Foundry CLI) to interact:
-
-```bash
-# Check contract balance
-cast balance <CONTRACT_ADDRESS> --rpc-url http://localhost:8545
-
-# Call a view function
-cast call <CONTRACT_ADDRESS> \
-    "getDepositLimit()" \
-    --rpc-url http://localhost:8545
-
-# Make a deposit (send ETH)
-cast send <CONTRACT_ADDRESS> \
-    "deposit()" \
-    --value 1ether \
-    --private-key $PRIVATE_KEY \
-    --rpc-url http://localhost:8545
-```
-
-#### Useful Commands
-
-##### Check Compilation
-```bash
-forge build
-```
-
-##### Run Tests
-```bash
-forge test
-```
-
-##### Run Tests with Verbosity
-```bash
-forge test -vvv
-```
-
-##### Check Gas
-```bash
-forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
-    --rpc-url http://localhost:8545 \
-    --private-key $PRIVATE_KEY
-```
-
-##### Clean Build
-```bash
-forge clean
-```
-
-#### Troubleshooting
-
-##### Error: "Failed to get EIP-1559 fees"
-- Make sure Anvil is running
-- Check if the port is correct (8545)
-
-##### Error: "Insufficient funds"
-- Use one of the accounts provided by Anvil
-- Verify the account has sufficient ETH
-
-##### Compilation Error
-- Run `forge build` to see detailed errors
-- Check if all dependencies are installed: `forge install`
-
-#### Next Steps
-
-1. **Test the contract**: Use `forge test` to run tests
-2. **Deploy to testnet**: Configure `foundry.toml` with testnet RPC
-3. **Verify contract**: Use tools like Etherscan (for testnets/mainnet)
-
-#### Complete Session Example
-
-```bash
-# Terminal 1: Start Anvil
+# Start Anvil
 anvil
 
-# Terminal 2: Deploy
-export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+# Deploy (in another terminal)
 forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
     --rpc-url http://localhost:8545 \
     --private-key $PRIVATE_KEY \
     --broadcast
+
+# Nota: Para ambiente local, a verificação no Etherscan não é necessária
 ```
 
-### Contract Verification
-
-This guide explains how to verify smart contracts on blockchain explorers (like Etherscan, Basescan, etc.) using Foundry.
-
-#### What is Contract Verification?
-
-Contract verification is the process of publishing your smart contract's source code on a blockchain explorer. This allows anyone to:
-- View the contract's source code
-- Verify that the compiled code matches the source code
-- Interact with the contract through the explorer's interface
-- Trust the contract, since the code is public and verifiable
-
-#### Prerequisites
-
-1. **Contract already deployed**: You need the address of the deployed contract
-2. **Explorer API Key**: You need an API key from the blockchain explorer
-   - **Etherscan**: https://etherscan.io/apis
-   - **Basescan**: https://basescan.org/apis
-   - **Other explorers**: Consult the specific explorer's documentation
-
-3. **Compilation artifacts**: Make sure compiled files are in `out/`
-
-#### Initial Setup
-
-##### 1. Get API Key
-
-1. Create an account on the blockchain explorer (Etherscan, Basescan, etc.)
-2. Go to the API Keys section
-3. Create a new API key
-4. Copy the key
-
-##### 2. Configure Environment Variable
+### Sepolia Testnet Deployment
 
 ```bash
-# For Etherscan (Ethereum Mainnet/Testnets)
-export ETHERSCAN_API_KEY=your_api_key_here
+# Set environment variables
+export ETH_USD_PRICE_FEED=0x694AA1769357215DE4FAC081bf1f309aDC325306
+export SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
+export PRIVATE_KEY=your_private_key
 
-# For Basescan (Base Mainnet/Testnets)
-export BASESCAN_API_KEY=your_api_key_here
+# Deploy
+forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
+    --rpc-url $SEPOLIA_RPC_URL \
+    --private-key $PRIVATE_KEY \
+    --broadcast \
+    --verify \
+    --etherscan-api-key $ETHERSCAN_API_KEY
 
-# For other networks, consult the explorer's documentation
+# A verificação é feita automaticamente com --verify no comando acima
+# Se precisar verificar manualmente, veja a seção "Verificação do Contrato no Etherscan"
 ```
 
-##### 3. Configure foundry.toml (Optional)
-
-You can also configure API keys directly in `foundry.toml`:
-
-```toml
-[etherscan]
-etherscan = { key = "your_api_key_here" }
-basescan = { key = "your_api_key_here" }
-```
-
-#### Basic Verification
-
-##### General Command
+### Mainnet Deployment
 
 ```bash
-forge verify-contract \
-    <CONTRACT_ADDRESS> \
-    <CONTRACT_NAME> \
-    --chain <NETWORK> \
-    --etherscan-api-key <API_KEY> \
-    --constructor-args <ARGS_ENCODED>
+# Mainnet ETH/USD price feed
+export ETH_USD_PRICE_FEED=0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419
+
+# Deploy with verification
+forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
+    --rpc-url $MAINNET_RPC_URL \
+    --private-key $PRIVATE_KEY \
+    --broadcast \
+    --verify \
+    --etherscan-api-key $ETHERSCAN_API_KEY
+
+# A verificação é feita automaticamente com --verify no comando acima
+# Se precisar verificar manualmente, veja a seção "Verificação do Contrato no Etherscan"
 ```
 
-##### Example: Verify KipuBankv2
+## Verificação do Contrato no Etherscan
 
-#### Ethereum Sepolia (Testnet)
+Após fazer o deploy do contrato, você pode verificá-lo no Etherscan usando o comando `forge verify-contract`:
+
+### Sepolia Testnet
 
 ```bash
-forge verify-contract \
-    0x1234567890123456789012345678901234567890 \
+# Variáveis de ambiente
+export CONTRACT_ADDRESS=0x...  # Endereço do contrato deployado
+export ETHERSCAN_API_KEY=your_etherscan_api_key
+export SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
+
+# Verificar o contrato
+# Nota: Ajuste os valores dos limites conforme usado no deploy
+forge verify-contract $CONTRACT_ADDRESS \
     src/KipuBankv2.sol:KipuBankv2 \
-    --chain sepolia \
+    --chain-id 11155111 \
     --etherscan-api-key $ETHERSCAN_API_KEY \
-    --constructor-args $(cast abi-encode "constructor(uint256,uint256)" 100000000000000000000 10000000000000000000)
+    --rpc-url $SEPOLIA_RPC_URL \
+    --constructor-args $(cast abi-encode "constructor(address,uint256,uint256)" \
+        0x694AA1769357215DE4FAC081bf1f309aDC325306 \
+        100000000000 \
+        10000000000)
 ```
 
-#### Base Sepolia (Testnet)
+**Alternativa usando variáveis de ambiente:**
 
 ```bash
-forge verify-contract \
-    0x1234567890123456789012345678901234567890 \
-    src/KipuBankv2.sol:KipuBankv2 \
-    --chain base_sepolia \
-    --etherscan-api-key $BASESCAN_API_KEY \
-    --constructor-args $(cast abi-encode "constructor(uint256,uint256)" 100000000000000000000 10000000000000000000)
-```
+# Se você usou variáveis de ambiente no deploy
+export ETH_USD_PRICE_FEED=0x694AA1769357215DE4FAC081bf1f309aDC325306
+export DEPOSIT_LIMIT=100000000000
+export TRANSACTIONS_LIMIT=10000000000
 
-#### Ethereum Mainnet
-
-```bash
-forge verify-contract \
-    0x1234567890123456789012345678901234567890 \
+forge verify-contract $CONTRACT_ADDRESS \
     src/KipuBankv2.sol:KipuBankv2 \
-    --chain mainnet \
+    --chain-id 11155111 \
     --etherscan-api-key $ETHERSCAN_API_KEY \
-    --constructor-args $(cast abi-encode "constructor(uint256,uint256)" 100000000000000000000 10000000000000000000)
+    --rpc-url $SEPOLIA_RPC_URL \
+    --constructor-args $(cast abi-encode "constructor(address,uint256,uint256)" \
+        $ETH_USD_PRICE_FEED \
+        $DEPOSIT_LIMIT \
+        $TRANSACTIONS_LIMIT)
 ```
 
-#### Encode Constructor Arguments
-
-KipuBankv2 has a constructor with two parameters:
-- `uint256 _depositLimit` (e.g., 100 ether = 100000000000000000000 wei)
-- `uint256 _transactionsLimit` (e.g., 10 ether = 10000000000000000000 wei)
-
-##### Method 1: Using cast abi-encode (Recommended)
+### Ethereum Mainnet
 
 ```bash
-cast abi-encode "constructor(uint256,uint256)" 100000000000000000000 10000000000000000000
-```
+# Variáveis de ambiente
+export CONTRACT_ADDRESS=0x...  # Endereço do contrato deployado
+export ETHERSCAN_API_KEY=your_etherscan_api_key
+export MAINNET_RPC_URL=https://mainnet.infura.io/v3/YOUR_KEY
 
-##### Method 2: Manual encoding
-
-For simple values, you can use `cast --to-wei`:
-
-```bash
-# Convert ether to wei
-cast --to-wei 100 ether  # Result: 100000000000000000000
-cast --to-wei 10 ether   # Result: 10000000000000000000
-```
-
-#### Verification with Libraries
-
-If the contract uses external libraries (like OpenZeppelin), you need to specify the paths:
-
-```bash
-forge verify-contract \
-    <CONTRACT_ADDRESS> \
+# Verificar o contrato
+# Nota: Ajuste os valores dos limites conforme usado no deploy
+forge verify-contract $CONTRACT_ADDRESS \
     src/KipuBankv2.sol:KipuBankv2 \
-    --chain <NETWORK> \
-    --etherscan-api-key <API_KEY> \
-    --constructor-args <ARGS_ENCODED> \
-    --libraries <LIBRARIES>
+    --chain-id 1 \
+    --etherscan-api-key $ETHERSCAN_API_KEY \
+    --rpc-url $MAINNET_RPC_URL \
+    --constructor-args $(cast abi-encode "constructor(address,uint256,uint256)" \
+        0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419 \
+        100000000000 \
+        10000000000)
 ```
 
-#### Automatic Verification After Deploy
+### Outras Redes
 
-You can verify automatically after deployment using the `--verify` flag:
+Para outras redes, ajuste o `--chain-id` conforme necessário:
+- Base: `--chain-id 8453`
+- Optimism: `--chain-id 10`
+- Arbitrum: `--chain-id 42161`
+- Polygon: `--chain-id 137`
+
+### Verificação Automática no Deploy
+
+A forma mais simples é usar `--verify` diretamente no comando de deploy:
 
 ```bash
 forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
-    --rpc-url <RPC_URL> \
+    --rpc-url $RPC_URL \
     --private-key $PRIVATE_KEY \
     --broadcast \
     --verify \
     --etherscan-api-key $ETHERSCAN_API_KEY
 ```
 
-#### Supported Networks
+Isso verificará automaticamente o contrato após o deploy.
 
-Foundry supports verification on various networks. Some examples:
+### Notas Importantes
 
-- `mainnet` - Ethereum Mainnet
-- `sepolia` - Ethereum Sepolia Testnet
-- `goerli` - Ethereum Goerli Testnet (deprecated)
-- `base` - Base Mainnet
-- `base_sepolia` - Base Sepolia Testnet
-- `optimism` - Optimism Mainnet
-- `optimism_sepolia` - Optimism Sepolia Testnet
-- `arbitrum` - Arbitrum Mainnet
-- `arbitrum_sepolia` - Arbitrum Sepolia Testnet
-- `polygon` - Polygon Mainnet
-- `polygon_mumbai` - Polygon Mumbai Testnet
+1. **Constructor Args**: Os argumentos do construtor devem corresponder **exatamente** aos usados no deploy:
+   - `address ethUsdPriceFeed`: Endereço do price feed Chainlink
+   - `uint256 depositLimitUsdc`: Limite de depósito em USDC (6 decimais) = 100000 * 10^6 = 100000000000
+   - `uint256 transactionsLimitUsdc`: Limite de transação em USDC (6 decimais) = 10000 * 10^6 = 10000000000
 
-To see all supported networks:
+2. **Obter Constructor Args do Deploy**: Se você não lembrar os valores exatos, pode consultá-los do contrato deployado:
+   ```bash
+   cast call $CONTRACT_ADDRESS "ETH_USD_PRICE_FEED()(address)" --rpc-url $RPC_URL
+   cast call $CONTRACT_ADDRESS "DEPOSIT_LIMIT_USDC()(uint256)" --rpc-url $RPC_URL
+   cast call $CONTRACT_ADDRESS "TRANSACTIONS_LIMIT_USDC()(uint256)" --rpc-url $RPC_URL
+   ```
 
-```bash
-forge verify-contract --help
-```
+3. **Libraries**: Se o contrato usar bibliotecas externas, adicione `--libraries` com os endereços.
 
-#### Complete Example: Verify KipuBankv2
+4. **Compiler Version**: O Foundry usa automaticamente a versão do compilador especificada no `foundry.toml`.
 
-##### Step 1: Deploy the Contract
+5. **Troubleshooting**: Se a verificação falhar, verifique:
+   - Se os constructor args estão corretos
+   - Se a versão do compilador corresponde
+   - Se todas as dependências estão corretas
 
-```bash
-forge script script/DeployKipuBankv2.s.sol:DeployKipuBankv2 \
-    --rpc-url https://sepolia.infura.io/v3/YOUR_INFURA_KEY \
-    --private-key $PRIVATE_KEY \
-    --broadcast
-```
+## Chainlink Price Feed Addresses
 
-**Note the deployed contract address**, for example: `0x5FbDB2315678afecb367f032d93F642f64180aa3`
+### Ethereum Mainnet
+- ETH/USD: `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419`
 
-##### Step 2: Encode Constructor Arguments
+### Sepolia Testnet
+- ETH/USD: `0x694AA1769357215DE4FAC081bf1f309aDC325306`
 
-```bash
-# Constructor values: depositLimit=100 ether, transactionsLimit=10 ether
-cast abi-encode "constructor(uint256,uint256)" \
-    $(cast --to-wei 100 ether) \
-    $(cast --to-wei 10 ether)
-```
+For other tokens and networks, refer to [Chainlink Documentation](https://docs.chain.link/data-feeds/price-feeds/addresses).
 
-##### Step 3: Verify the Contract
+## Events
 
-```bash
-forge verify-contract \
-    0x5FbDB2315678afecb367f032d93F642f64180aa3 \
-    src/KipuBankv2.sol:KipuBankv2 \
-    --chain sepolia \
-    --etherscan-api-key $ETHERSCAN_API_KEY \
-    --constructor-args $(cast abi-encode "constructor(uint256,uint256)" 100000000000000000000 10000000000000000000)
-```
+The contract emits the following events:
 
-##### Step 4: Verify Status
+- `Deposit(address indexed sender, address indexed token, uint256 rawAmount, uint256 usdcEquivalent)`
+- `Withdraw(address indexed sender, address indexed token, uint256 rawAmount, uint256 usdcEquivalent)`
+- `TokenInfoUpdated(address indexed token, uint8 decimals, address priceFeed)`
+- `PriceFeedUpdated(address indexed token, address oldPriceFeed, address newPriceFeed)`
 
-After running the command, you will see a success message. Access the blockchain explorer and verify that the contract is marked as "Verified".
+## Errors
 
-#### Verify UfesToken
+Custom errors for gas-efficient reverts:
 
-UfesToken is a simple ERC20 contract with no constructor arguments:
-
-```bash
-forge verify-contract \
-    <UFES_TOKEN_ADDRESS> \
-    src/UfesToken.sol:UfesToken \
-    --chain sepolia \
-    --etherscan-api-key $ETHERSCAN_API_KEY
-```
-
-#### Troubleshooting
-
-##### Error: "Contract source code already verified"
-
-The contract has already been verified previously. This is not a problem - it means the verification was successful.
-
-##### Error: "Unable to verify"
-
-Possible causes:
-1. **Incorrect constructor arguments**: Check if the arguments are encoded correctly
-2. **Different compiler version**: Make sure to use the same Solidity version
-3. **Different optimizations**: Check if the optimization settings are the same
-4. **Invalid API Key**: Verify that the API key is correct and active
-
-##### Check Compilation Settings
-
-To check the settings used in compilation:
-
-```bash
-forge build --sizes
-```
-
-##### Verify with Verbosity
-
-Use `-vvv` to see more details:
-
-```bash
-forge verify-contract \
-    <ADDRESS> \
-    src/KipuBankv2.sol:KipuBankv2 \
-    --chain sepolia \
-    --etherscan-api-key $ETHERSCAN_API_KEY \
-    --constructor-args <ARGS> \
-    -vvv
-```
-
-##### Error: "Compiler version mismatch"
-
-Make sure the Solidity version in the contract matches the version used by the explorer. You can specify the version:
-
-```bash
-forge verify-contract \
-    <ADDRESS> \
-    src/KipuBankv2.sol:KipuBankv2 \
-    --chain sepolia \
-    --etherscan-api-key $ETHERSCAN_API_KEY \
-    --compiler-version <VERSION> \
-    --constructor-args <ARGS>
-```
-
-#### Manual Verification (Alternative)
-
-If automatic verification fails, you can verify manually:
-
-1. Access the blockchain explorer (Etherscan, Basescan, etc.)
-2. Navigate to the contract page
-3. Click "Contract" → "Verify and Publish"
-4. Fill in the fields:
-   - Compiler Type: Solidity (Single file) or Solidity (Standard JSON Input)
-   - Compiler Version: The version used (e.g., v0.8.20+commit.a1b79de6)
-   - License: MIT (or your contract's license)
-   - Source Code: Paste the contract's source code
-5. Click "Verify and Publish"
-
-#### Automated Verification Script
-
-You can create a script to automate verification:
-
-```bash
-#!/bin/bash
-
-# Configuration
-CONTRACT_ADDRESS="0x1234567890123456789012345678901234567890"
-CHAIN="sepolia"
-API_KEY=$ETHERSCAN_API_KEY
-
-# Constructor arguments
-DEPOSIT_LIMIT=100000000000000000000  # 100 ether
-TRANSACTIONS_LIMIT=10000000000000000000  # 10 ether
-
-# Encode arguments
-CONSTRUCTOR_ARGS=$(cast abi-encode "constructor(uint256,uint256)" $DEPOSIT_LIMIT $TRANSACTIONS_LIMIT)
-
-# Verify
-forge verify-contract \
-    $CONTRACT_ADDRESS \
-    src/KipuBankv2.sol:KipuBankv2 \
-    --chain $CHAIN \
-    --etherscan-api-key $API_KEY \
-    --constructor-args $CONSTRUCTOR_ARGS \
-    -vvv
-```
-
-Save as `verify.sh`, make it executable and run:
-
-```bash
-chmod +x verify.sh
-./verify.sh
-```
-
-#### Useful Links
-
-- [Foundry Documentation - Verifying Contracts](https://book.getfoundry.sh/forge/verify-contract)
-- [Etherscan API Documentation](https://docs.etherscan.io/api-endpoints/contracts)
-- [Basescan API Documentation](https://docs.basescan.org/api-endpoints/contracts)
-
-#### Important Notes
-
-⚠️ **Security**: Never share your API keys publicly. Use environment variables or `.env` files (not committed to git).
-
-⚠️ **Costs**: Contract verification is free, but you need an API key (which is also free).
-
-⚠️ **Time**: Verification may take a few minutes. If it fails, try again after a few minutes.
-
-⚠️ **Irreversible**: Once verified, the source code becomes publicly available permanently. Make sure you're ready to publish the code.
+- `DepositLimitExceeded(uint256 limit, uint256 current, uint256 attempted)`
+- `TransactionsLimitExceeded(uint256 limit, uint256 attempted)`
+- `InsufficientBalance(uint256 balance, uint256 needed)`
+- `InvalidAmount(uint256 amount)`
+- `InvalidAddress(address _address)`
+- `InvalidPriceFeed(address priceFeed)`
+- `StalePriceFeed(uint256 updatedAt, uint256 currentTime)`
+- `InvalidPrice(int256 price)`
+- `FailedWithdraw(uint256 amount)`
+- `FailedTokenTransfer(address token, uint256 amount)`
+- `TokenInfoNotSet(address token)`
+- `DecimalsMismatch(uint8 expected, uint8 actual)`
 
 ## Project Structure
 
 ```
 kipu-bank-v2/
 ├── src/
-│   ├── KipuBankv2.sol      # Main contract
+│   ├── KipuBankv2.sol      # Main contract with all improvements
 │   └── UfesToken.sol       # Example ERC20 token
 ├── script/
 │   ├── DeployKipuBankv2.s.sol
 │   └── DeployUfesToken.s.sol
 ├── test/
-│   └── Counter.t.sol
+│   └── (test files)
 ├── lib/
 │   ├── forge-std/
-│   └── openzeppelin-contracts/
+│   ├── openzeppelin-contracts/
+│   └── chainlink-brownie-contracts/
 ├── foundry.toml
 └── README.md
 ```
-
-## Events
-
-The contract emits the following events:
-
-- `Deposit(address indexed sender, uint256 amount)` - ETH deposit
-- `Withdraw(address indexed sender, uint256 amount)` - ETH withdrawal
-- `DepositToken(address indexed sender, address indexed token, uint256 amount)` - ERC20 deposit
-- `WithdrawToken(address indexed sender, address indexed token, uint256 amount)` - ERC20 withdrawal
-
-## Errors
-
-Custom errors for gas-efficient reverts:
-
-- `DepositLimitExceeded` - Deposit would exceed limit
-- `TransactionsLimitExceeded` - Transaction amount exceeds limit
-- `InsufficientBalance` - User doesn't have enough balance
-- `InvalidAmount` - Amount is zero
-- `InvalidAddress` - Address is zero
-- `FailedWithdraw` - ETH transfer failed
-- `FailedTokenTransfer` - Token transfer failed
 
 ## License
 
@@ -831,4 +767,4 @@ This is a project for learning and demonstration purposes. Contributions and sug
 
 ## Disclaimer
 
-This contract is provided as-is for educational purposes. Always audit smart contracts before deploying to mainnet and use at your own risk.
+This contract is provided as-is for educational purposes. Always audit smart contracts before deploying to mainnet and use at your own risk. The contract has been improved with production-ready features but should undergo professional security auditing before mainnet deployment.
